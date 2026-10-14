@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netsentinel"
+version = "0.1.0"
+description = "Rule-based network intrusion detection and traffic analysis"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["scapy>=2.6,<3"]
+
+[project.optional-dependencies]
+dashboard = ["streamlit>=1.40,<2"]
+dev = ["coverage>=7,<8"]
+
+[project.scripts]
+netsentinel = "netsentinel.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["netsentinel"]
+omit = ["*/__main__.py", "*/dashboard/*", "*/detection/*", "*/alerts.py", "*/risk.py"]
+
+[tool.coverage.report]
+show_missing = true

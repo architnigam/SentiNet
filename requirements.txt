@@ -1,2 +1,2 @@
-scapy
-streamlit
+-e .
+# Install the dashboard extra in Part 3: pip install -e ".[dashboard]"

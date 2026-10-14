@@ -6,6 +6,11 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+*.egg-info/
+build/
+dist/
+coverage.json
+tests/.tmp/
 
 # Local configuration
 .env
