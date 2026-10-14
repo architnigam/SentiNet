@@ -1,0 +1,19 @@
+{
+  "window_seconds": 10,
+  "port_scan_unique_ports_threshold": 20,
+  "syn_packets_threshold": 100,
+  "traffic_packets_per_second_threshold": 200,
+  "alert_cooldown_seconds": 30,
+  "risk_weights": {
+    "port_scan": 30,
+    "syn_flood": 40,
+    "traffic_anomaly": 30
+  },
+  "severity_min_scores": {
+    "low": 1,
+    "medium": 25,
+    "high": 50,
+    "critical": 75
+  },
+  "alert_log_path": "logs/alerts.jsonl"
+}
