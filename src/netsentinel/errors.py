@@ -11,3 +11,11 @@ class ConfigurationError(NetSentinelError):
 
 class CaptureError(NetSentinelError):
     """The capture is unreadable, corrupt, or outside the supported format."""
+
+
+class DetectionError(NetSentinelError):
+    """Detection cannot continue without dropping observations."""
+
+
+class AlertLogError(NetSentinelError):
+    """An alert could not be persisted safely."""

@@ -23,7 +23,7 @@ where = ["src"]
 [tool.coverage.run]
 branch = true
 source = ["netsentinel"]
-omit = ["*/__main__.py", "*/dashboard/*", "*/detection/*", "*/alerts.py", "*/risk.py"]
+omit = ["*/__main__.py", "*/dashboard/*"]
 
 [tool.coverage.report]
 show_missing = true

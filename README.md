@@ -6,7 +6,7 @@ NetSentinel is a Python project for analyzing network traffic, detecting
 suspicious behavior, assigning risk scores, and displaying security alerts.
 It is an IDS: it detects and alerts; it does not automatically block traffic.
 
-**Status: Part 1 is implemented and tested. Parts 2 and 3 are planned.**
+**Status: Parts 1 and 2 are implemented and tested. Part 3 is planned.**
 The repository folder is named `SentiNet`; the Python package is `netsentinel`.
 
 ## The three project parts
@@ -14,7 +14,7 @@ The repository folder is named `SentiNet`; the Python package is `netsentinel`.
 | Part | Work included | Status |
 | --- | --- | --- |
 | **1. Packet-analysis foundation** | Configuration validation, offline PCAP/PCAPNG input, IPv4/IPv6 TCP/UDP analysis, statistics, CLI, JSON reports, synthetic demo, tests | Complete |
-| **2. Detection and security alerts** | Port scans, abnormal SYN activity, traffic-rate anomalies, window management, risk scoring, JSON Lines alerts, duplicate suppression, tests | Planned |
+| **2. Detection and security alerts** | Port scans, abnormal SYN activity, traffic-rate anomalies, window management, risk scoring, JSON Lines alerts, duplicate suppression, tests | Complete |
 | **3. Live monitoring and dashboard** | Live capture, interface selection, clean shutdown, Streamlit statistics and alerts, integration tests, demonstration | Planned |
 
 Each part has test requirements in [tests/README.md](tests/README.md).
@@ -31,8 +31,8 @@ Part 2:                         Detection rules -> Risk score -> Alert logs
 Part 3: Live capture feeds the same pipeline -> Streamlit dashboard <-+
 ```
 
-The three planned detection rules evaluate the same analyzed traffic independently.
-Part 1 performs packet analysis only; it does not yet identify attacks or emit alerts.
+The three detection rules evaluate the same analyzed traffic independently.
+The default command performs Part 1 analysis; add `--detect` for Part 2 rules and alerts.
 
 ## Setup
 
@@ -56,7 +56,10 @@ If `--config` is omitted, built-in defaults are used. If supplied, that file
 must exist and be valid JSON. Missing fields use defaults; unknown/duplicate keys,
 wrong types, invalid thresholds, and invalid score ranges are rejected.
 Paths are relative to the working directory. Detection settings are validated and
-included in the report now; their rules will be implemented in Part 2.
+included in the report; rules use them when `--detect` is enabled. Window length is
+limited to 1–86,400 seconds, cooldown to 0–604,800 seconds, and count/rate thresholds
+to 1–1,000,000,000. Rule weights are positive integers totaling at most 100; severity
+thresholds start at 1 and strictly increase to at most 100.
 
 ## Run Part 1
 
@@ -94,12 +97,108 @@ available at `.\.venv\Scripts\netsentinel.exe` on Windows.
 | `--sample-limit` | Keep the first 0–1000 analyzed records; default 10 |
 | `--output` | Also save the JSON report to a file |
 | `--help` | Show command help |
+| `--detect` | Enable detection and JSON Lines alert logging |
+| `--alert-log` | Override the configured log path; requires `--detect` |
 
 JSON is printed to standard output. Errors go to standard error. Exit codes:
 `0` success, `1` capture/configuration/output error, `2` invalid CLI arguments,
 `130` interruption. A corrupt capture produces no completed report. Output is
 replaced atomically after successful analysis; `--output` cannot overwrite the
 capture or explicit configuration, including through a hard link.
+
+## Run Part 2
+
+Generate synthetic suspicious traffic and analyze it with detection enabled:
+
+```powershell
+.\.venv\Scripts\python.exe examples\create_detection_demo.py
+.\.venv\Scripts\python.exe -m netsentinel --pcap data\pcaps\threat_demo.pcap --detect --alert-log logs\threat_alerts.jsonl --output logs\threat_summary.json
+```
+
+The generator writes **2,000 synthetic SYN packets** to a file and never transmits
+them. Using default settings, the report contains three escalating alerts:
+
+| Trigger | Active rules | Score | Severity |
+| --- | --- | --- | --- |
+| Packet 20 | Port scan | 30 | Medium |
+| Packet 100 | Port scan + SYN flood | 70 | High |
+| Packet 2,000 | Port scan + SYN flood + traffic anomaly | 100 | Critical |
+
+To use your own capture and configuration:
+
+```powershell
+.\.venv\Scripts\python.exe -m netsentinel --pcap data\pcaps\sample.pcap --config config\settings.json --detect --output logs\summary.json
+```
+
+Without `--alert-log`, alerts are appended to `alert_log_path` in the configuration
+(default `logs/alerts.jsonl`). Logs preserve previous runs; each run/alert has a
+unique ID. Replaying a capture adds new alerts rather than deduplicating across runs.
+The summary contains the current run's counters and its latest 100 alerts. Detection
+reports use schema version 2; analysis-only reports retain schema version 1. Alert
+records have their own schema version 1.
+
+## Detection and scoring procedure
+
+1. Process normalized TCP/UDP records in capture order. All thresholds include
+   equality. The rolling window is **(current time − window length, current time]**;
+   an event exactly one window old expires.
+2. For each source/target IP pair, count unique **(protocol, destination port)**
+   pairs. Repeated packets/source-port changes do not increase this count. TCP 80
+   and UDP 80 count separately. Default port-scan threshold: **20**.
+3. For each source/target, count TCP packets with SYN set and ACK clear. Default
+   threshold: **100**. Retransmissions count as packets but occupy one pending
+   connection. SYN-ACK followed by an originating ACK marks observed completion;
+   RST from either direction clears pending state. SYN+FIN/RST packets contribute
+   to the SYN count but are not tracked as pending connections.
+4. Count all analyzed TCP/UDP packets per source across destinations. Divide by
+   the **full configured window**, including during startup. Default threshold:
+   **200 packets/second over 10 seconds**, requiring 2,000 packets in the window.
+5. Evaluate the current source/target's scan/SYN rules and the source-wide rate.
+   Add each active rule's weight **once**: port scan 30, SYN flood 40, traffic 30.
+   Recalculate from currently active indicators; expired indicators add nothing.
+6. Map score to **Low 1–24 / Medium 25–49 / High 50–74 / Critical 75–100**.
+   Zero produces no alert. Pure rate alerts have a null destination; when combined
+   with pair-level rules, rate evidence still explicitly covers all destinations.
+7. Suppress identical **source + target + active-rule-set** signatures for **30
+   seconds** by default, measured from the last emitted alert. A changed rule set
+   can alert immediately; the exact cooldown boundary permits another alert.
+   Cooldown zero disables suppression.
+8. Append the alert with timestamp, run/alert IDs, source/target, window, rules,
+   score, severity, and supporting counts. Update emission/cooldown counters only
+   after the log write succeeds.
+
+Detection uses the latest accepted TCP/UDP timestamp as its watermark. Records
+older than that watermark remain in packet statistics but are skipped by detection
+and counted in `late_packets_skipped`. Equal timestamps are accepted. Cleanup
+occurs as accepted packet time advances; offline analysis has no wall-clock timer.
+Rules are evaluated for the current packet's source/target, rather than retroactively
+reissuing alerts for every previously observed target when a source-wide rate changes.
+
+## Detection limits and log handling
+
+- Window state is incremental and bounded: **100,000 active events**, **16,384
+  pending connections**, and **16,384 active alert cooldowns**. Exhaustion stops the
+  run with a clear error rather than silently evicting observations. Library
+  constructors expose these limits for tuning; larger configured detection thresholds
+  still require enough state capacity to be reached.
+- At most 20 destination ports are sampled in scan evidence. Aggregate counts
+  remain complete within the window. The report retains only the latest 100 alerts;
+  the JSON Lines file contains every successfully emitted alert.
+- Handshake tracking uses IPs/ports and observed flags, without sequence validation
+  or stream reassembly. SYN rate is a suspicious indicator, not proof of an attack;
+  legitimate bursts, asymmetric capture, and incomplete capture can affect results.
+  Rules operate per source (and per source/target), not aggregate distributed attacks
+  from many unrelated sources.
+- Logging supports **one writer per log file**. Records are limited to **1 MiB**,
+  flushed and synced after each append. An existing log's final line must be complete,
+  valid JSON with a recognized alert envelope; older lines are not rescanned.
+  For a damaged tail, repair the file or choose a new `--alert-log` path.
+- A write failure attempts to truncate the incomplete append and aborts detection.
+  Rollback is best effort when the filesystem itself fails. Previously completed
+  alerts remain if later detection, output, or interruption fails; summary output is
+  replaced only after successful analysis. Logs are not a transactional database.
+- The CLI rejects log aliases of its capture, configuration, or summary, including
+  hard links. Detection and cooldown state reset for each run.
 
 ## What Part 1 implements
 
@@ -156,8 +255,10 @@ For coverage:
 .\.venv\Scripts\python.exe -m coverage report -m
 ```
 
-Part 1 validation: **73 tests passed, no skips; 99% combined statement/branch
-coverage** on Windows with Python 3.12.5 and Scapy 2.8.0. See
+Parts 1 and 2 validation: **147 tests passed, no skips; 99% combined statement/branch
+coverage** on Windows with Python 3.12.5 and Scapy 2.8.0. The detection engine,
+three rule modules, risk scoring, and alert logging each have **100% statement and
+branch coverage**. See
 [tests/README.md](tests/README.md) for the test matrix and scope. Tests use synthetic
 traffic and need no live capture privileges. The hard-link test can skip when a
 filesystem or sandbox denies link creation; it passed in the validation run.
@@ -172,6 +273,7 @@ SentiNet/
 |-- requirements.txt
 |-- config/settings.example.json
 |-- examples/create_demo_capture.py
+|-- examples/create_detection_demo.py
 |-- data/pcaps/                  # Authorized inputs (ignored by Git)
 |-- logs/                       # Generated reports and future alerts (ignored)
 |-- src/netsentinel/
@@ -185,9 +287,10 @@ SentiNet/
 |   |-- analyzer.py
 |   |-- statistics.py
 |   |-- pipeline.py
-|   |-- risk.py                  # Part 2 placeholder
-|   |-- alerts.py                # Part 2 placeholder
-|   |-- detection/               # Part 2 placeholders
+|   |-- risk.py                  # Part 2 scoring
+|   |-- alerts.py                # Part 2 cooldowns and JSON Lines persistence
+|   |-- detection/
+|   |   |-- engine.py            # Rolling windows and observed handshakes
 |   |   |-- port_scan.py
 |   |   |-- syn_flood.py
 |   |   `-- traffic_anomaly.py
@@ -197,11 +300,7 @@ SentiNet/
 
 ## Next implementation steps
 
-**Part 2:** Implement time-windowed port/SYN/rate rules, correlate active indicators
-without repeatedly adding a rule's weight, assign Low/Medium/High/Critical severity,
-and write evidence-rich alerts with cooldowns. Test thresholds, expiry, timestamp
-ordering, source/target isolation, connection progress, state limits, scoring
-boundaries, and log failures. The example configuration supplies initial lab
+**Parts 1 and 2 are complete.** The example configuration supplies initial lab
 thresholds to tune, not validated production detection settings.
 
 **Part 3:** Feed live traffic through the same pipeline, publish statistics safely,

@@ -63,14 +63,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, help="Also save the JSON summary atomically to this file")
     parser.add_argument("--limit", type=_positive, help="Maximum frames to analyze (including skipped frames)")
     parser.add_argument("--sample-limit", type=_sample_count, default=10, help="Sample records to retain (0–1000; default 10)")
+    parser.add_argument("--detect", action="store_true", help="Enable Part 2 detection and JSON Lines alert logging")
+    parser.add_argument("--alert-log", type=Path, help="Override configured alert log (requires --detect)")
     args = parser.parse_args(argv)
+    if args.alert_log is not None and not args.detect:
+        parser.error("--alert-log requires --detect")
     try:
         if args.output is not None:
             inputs = [args.pcap] + ([args.config] if args.config is not None else [])
             if any(_same_file(args.output, source) for source in inputs):
                 raise NetSentinelError("Output must not overwrite the capture or configuration file.")
         settings = load_settings(args.config)
-        report = analyze_capture(args.pcap, settings=settings, packet_limit=args.limit, sample_limit=args.sample_limit)
+        alert_log = args.alert_log if args.alert_log is not None else Path(settings.alert_log_path)
+        if args.detect:
+            protected = [args.pcap] + ([args.config] if args.config is not None else [])
+            if args.output is not None:
+                protected.append(args.output)
+            if any(_same_file(alert_log, other) for other in protected):
+                raise NetSentinelError("Alert log must not overwrite the capture, configuration, or summary output.")
+        report = analyze_capture(args.pcap, settings=settings, packet_limit=args.limit, sample_limit=args.sample_limit,
+                                 detect=args.detect, alert_log_path=alert_log if args.detect else None)
         text = json.dumps(report, indent=2, allow_nan=False)
         if args.output is not None:
             write_report(args.output, text)

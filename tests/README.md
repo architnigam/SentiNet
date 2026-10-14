@@ -31,18 +31,40 @@ Recorded validation on **2026-10-14**:
   the CLI saved a valid JSON summary.
 - `pip check` passed; `git diff --check` passed.
 
-Coverage includes capture, analysis, configuration, statistics, pipeline, models,
-errors, and CLI. Future detection/dashboard placeholders and the tiny package
-launcher are excluded. Actual launchers are tested in subprocesses, which are
+For that initial Part 1 run, coverage included capture, analysis, configuration,
+statistics, pipeline, models, errors, and CLI. Detection/dashboard placeholders
+and the tiny package launcher were excluded. Actual launchers are tested in subprocesses, which are
 not included in the parent process's coverage measurement.
 
 The hard-link test may skip where link creation is denied; the final validation
-allowed it. Other Python versions/operating systems, real NIC traffic, and
-detection/dashboard behavior have not yet been validated. High coverage and fuzz
+allowed it. Other Python versions/operating systems and real NIC traffic have not
+been validated. Detection results are recorded below; the dashboard is still planned. High coverage and fuzz
 samples do not prove that every malformed input is covered. Supported format
 limits are explicit in the main README.
 
-## Part 2: planned acceptance tests
+## Part 2: implemented
+
+The complete suite now runs **147 tests with no failures or skips** in the
+unrestricted Windows validation run. Overall combined statement/branch coverage is
+**99%**. New engine, rule, risk, and alert-log modules have **100% statement and
+branch coverage**. Coverage now includes these modules; only the future dashboard
+and tiny package launcher are excluded. Python/Scapy versions are unchanged from
+the Part 1 validation above.
+
+| Test file | Verified behavior |
+| --- | --- |
+| `test_detection.py` | Exact/below/above thresholds; unique TCP/UDP port policy; source/target isolation; fixed-denominator rate; window equality; expiry/cleanup; late/equal/large timestamps; SYN retransmissions; observed handshake progression; reverse resets; invalid inputs; bounded event/connection state; bounded evidence; 500-record independent brute-force window oracle |
+| `test_alerts.py` | All eight rule combinations; duplicate-rule scoring; severity boundaries; custom scores; IDs/evidence; cooldown equality/zero/escalation/isolation; bounded cooldown state; fresh runs; persistence before cooldown updates; valid/reopened JSON Lines; corrupt/partial/nonstandard tails; exact/oversized records; large logs; permissions; short writes; sync/seek/rollback errors |
+| `test_detection_pipeline.py` | Normal traffic baseline; scan/SYN/rate/combined indicators; empty/bad capture/log; late-packet counters; bounded recent alerts with complete persistence; configured/default log behavior; analysis-only compatibility; aliases including hard links; CLI flags/errors; retained completed alerts on later failure; synthetic threat escalation |
+| `test_config.py` | Operational upper bounds for windows, cooldowns, and packet/port/rate thresholds |
+
+The manual Part 2 demo verified 2,000 analyzed packets, scores **30 / 70 / 100**,
+and **Medium / High / Critical** alerts. JSON stdout and summary output agree;
+each alert is persisted in the JSON Lines log. `pip check` and `git diff --check`
+pass. The two hard-link tests may skip inside the Windows sandbox; both passed
+in the unrestricted final suite.
+
+Implemented acceptance cases:
 
 - Port scans: below/at/above unique-port threshold; repeated ports; separate
   sources/targets; TCP/UDP policy; exact window boundaries.
@@ -59,8 +81,11 @@ limits are explicit in the main README.
 - Integration: synthetic normal/scan/SYN/burst captures produce expected alerts
   and consistent statistics without false alerts for the normal baseline.
 
-Part 2 is complete when these behaviors have defined policies, working
-implementations, and passing tests; documentation must explain deliberate limits.
+The README documents the policies and deliberate limits: accepted-packet capture
+time, late-record exclusion, no sequence-number validation, source-wide rate scope,
+per-pair correlation, single-writer logs with tail-only validation, bounded state,
+and best-effort rollback. These tests do not claim that all possible inputs are
+bug-free or that production traffic has been validated.
 
 ## Part 3: planned acceptance tests
 

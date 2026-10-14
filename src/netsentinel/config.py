@@ -58,7 +58,6 @@ def load_settings(path: str | Path | None = None) -> Settings:
     Numeric strings, floats, booleans, duplicate keys, and nonstandard JSON
     constants are rejected rather than silently converted.
     """
-    values = Settings().to_dict()
     if path is None:
         return Settings()
     try:
@@ -66,6 +65,12 @@ def load_settings(path: str | Path | None = None) -> Settings:
             supplied = json.load(handle, object_pairs_hook=_unique_object)
     except (OSError, UnicodeError, ValueError) as exc:
         raise ConfigurationError(f"Cannot read configuration '{path}': {exc}") from exc
+    return settings_from_dict(supplied)
+
+
+def settings_from_dict(supplied: dict) -> Settings:
+    """Validate programmatic settings with the same policy used for JSON files."""
+    values = Settings().to_dict()
     if not isinstance(supplied, dict):
         raise ConfigurationError("Configuration must be a JSON object.")
     unknown = supplied.keys() - values.keys()
@@ -82,7 +87,9 @@ def load_settings(path: str | Path | None = None) -> Settings:
             values[name] = value
     for name in ("window_seconds", "port_scan_unique_ports_threshold", "syn_packets_threshold",
                  "traffic_packets_per_second_threshold", "alert_cooldown_seconds"):
-        _integer(values[name], name, minimum=0 if name == "alert_cooldown_seconds" else 1)
+        maximum = 86_400 if name == "window_seconds" else (
+            604_800 if name == "alert_cooldown_seconds" else 1_000_000_000)
+        _integer(values[name], name, minimum=0 if name == "alert_cooldown_seconds" else 1, maximum=maximum)
     for name, value in values["risk_weights"].items():
         _integer(value, f"risk_weights.{name}", maximum=100)
     if sum(values["risk_weights"].values()) > 100:

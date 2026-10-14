@@ -8,6 +8,16 @@ from tests.helpers import ROOT, TemporaryCase
 
 
 class ConfigurationTests(TemporaryCase):
+    def test_operational_upper_bounds_are_validated(self):
+        for name, maximum in [("window_seconds", 86400), ("alert_cooldown_seconds", 604800),
+                              ("syn_packets_threshold", 1_000_000_000),
+                              ("port_scan_unique_ports_threshold", 1_000_000_000),
+                              ("traffic_packets_per_second_threshold", 1_000_000_000)]:
+            with self.subTest(name=name):
+                self.assertEqual(getattr(self.load({name: maximum}), name), maximum)
+                with self.assertRaises(ConfigurationError):
+                    self.load({name: maximum + 1})
+
     def load(self, value):
         return load_settings(self.save(json.dumps(value).encode(), "settings.json"))
 
