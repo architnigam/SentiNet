@@ -38,7 +38,7 @@ not included in the parent process's coverage measurement.
 
 The hard-link test may skip where link creation is denied; the final validation
 allowed it. Other Python versions/operating systems and real NIC traffic have not
-been validated. Detection results are recorded below; the dashboard is still planned. High coverage and fuzz
+been validated. Detection and dashboard results are recorded below. High coverage and fuzz
 samples do not prove that every malformed input is covered. Supported format
 limits are explicit in the main README.
 
@@ -47,8 +47,8 @@ limits are explicit in the main README.
 The complete suite now runs **147 tests with no failures or skips** in the
 unrestricted Windows validation run. Overall combined statement/branch coverage is
 **99%**. New engine, rule, risk, and alert-log modules have **100% statement and
-branch coverage**. Coverage now includes these modules; only the future dashboard
-and tiny package launcher are excluded. Python/Scapy versions are unchanged from
+branch coverage**. That Part 2 run included these modules and excluded the then-future
+dashboard and tiny package launcher. Python/Scapy versions are unchanged from
 the Part 1 validation above.
 
 | Test file | Verified behavior |
@@ -87,7 +87,40 @@ per-pair correlation, single-writer logs with tail-only validation, bounded stat
 and best-effort rollback. These tests do not claim that all possible inputs are
 bug-free or that production traffic has been validated.
 
-## Part 3: planned acceptance tests
+## Part 3: implemented and automatically tested
+
+The full suite now passes **201 tests with zero failures and zero skips** in the
+unrestricted Windows validation run. Overall statement/branch coverage is **99%**;
+`live.py`, `runtime.py`, `storage.py`, `dashboard/app.py`, and `dashboard/data.py`
+each have **100% statement and branch coverage**. The dashboard dependency is
+Streamlit **1.66.0**; the full application now requires Python **3.11+**. Install
+`requirements.txt` before running the full suite so widget tests have Streamlit.
+
+| Test file | Verified behavior |
+| --- | --- |
+| `test_live.py` | Interface catalog/provider status; exact/ambiguous selection; metadata and truncation; single socket; no packet retention; count/duration bounds; idle heartbeat; stop events; callback failure propagation; permissions/backend failure; unexpected socket close; interruption; cleanup failure; invalid options |
+| `test_runtime.py` | Shared packet-to-alert flow; incremental/atomic snapshots; idle/stopped/completed/failed status; Ctrl+C state; write failures; exclusive output/log ownership; PID locks/cleanup; output aliases; CLI listing/source/duration/limit handling; default output; clean errors |
+| `test_dashboard.py` | Snapshot validation/size limits; count consistency; alert envelopes; bounded tails; incomplete/malformed log lines; run/severity/source filters; default paths; actual Streamlit metrics/charts/table/evidence; refresh with no capture/write side effects; path recovery; missing logs; provider failure; stale/fresh/stopped states; empty reports |
+
+Streamlit `AppTest` runs the actual app and widgets, not a substitute renderer.
+Socket/provider tests are deterministic mocks and send no traffic. Coverage
+includes the dashboard and live code; only the tiny package launcher is excluded.
+The remaining uncovered branches are existing defensive/launcher paths, not a
+claim that every possible input has been proven safe.
+
+Manual checks on this machine:
+
+- Replayed the synthetic 2,000-packet threat capture: three escalating alerts,
+  scores 30/70/100, with matching log and summary records.
+- Started the local dashboard at **http://127.0.0.1:8501**. Its health endpoint
+  returned **200 / ok**, and its HTML page returned **200**.
+- Enumerated interfaces and attempted a real bounded capture on **Wi-Fi**. The
+  machine lacks Npcap: capture exited with a clear error and wrote a failed-status
+  snapshot. **Successful real NIC capture has not been validated.**
+- Dependency and whitespace checks passed. Sandbox limitations on Streamlit
+  temporary files and hard links required the final tests to run unrestricted.
+
+Implemented acceptance cases:
 
 - Capture: interfaces, missing provider, permissions, start/stop/interruption,
   provider failures, resource cleanup (mocked for automation).
@@ -98,5 +131,7 @@ bug-free or that production traffic has been validated.
 - Demonstration: packet input -> rule evidence -> risk score -> alert log -> dashboard,
   using authorized local traffic and a repeatable offline fixture.
 
-Real interface/provider checks need a suitable lab and are separate from mocked
-tests. Record automated and actual lab results before calling Part 3 complete.
+Implementation and automated validation are complete. The remaining lab check is
+successful authorized NIC capture after installing the missing driver. The
+dashboard and mocked live tests do not establish lossless capture, production
+detection accuracy, or compatibility with untested operating systems/providers.

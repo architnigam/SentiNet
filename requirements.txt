@@ -1,2 +1,2 @@
--e .
-# Install the dashboard extra in Part 3: pip install -e ".[dashboard]"
+-e .[dashboard]
+# Optional coverage tool: pip install -e ".[dev]"

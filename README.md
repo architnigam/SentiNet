@@ -6,7 +6,9 @@ NetSentinel is a Python project for analyzing network traffic, detecting
 suspicious behavior, assigning risk scores, and displaying security alerts.
 It is an IDS: it detects and alerts; it does not automatically block traffic.
 
-**Status: Parts 1 and 2 are implemented and tested. Part 3 is planned.**
+**Status: All three parts are implemented. Automated tests and dashboard checks
+pass. Real live capture on this Windows machine requires Npcap before a NIC lab
+test can be completed.**
 The repository folder is named `SentiNet`; the Python package is `netsentinel`.
 
 ## The three project parts
@@ -15,7 +17,7 @@ The repository folder is named `SentiNet`; the Python package is `netsentinel`.
 | --- | --- | --- |
 | **1. Packet-analysis foundation** | Configuration validation, offline PCAP/PCAPNG input, IPv4/IPv6 TCP/UDP analysis, statistics, CLI, JSON reports, synthetic demo, tests | Complete |
 | **2. Detection and security alerts** | Port scans, abnormal SYN activity, traffic-rate anomalies, window management, risk scoring, JSON Lines alerts, duplicate suppression, tests | Complete |
-| **3. Live monitoring and dashboard** | Live capture, interface selection, clean shutdown, Streamlit statistics and alerts, integration tests, demonstration | Planned |
+| **3. Live monitoring and dashboard** | Live capture, interface selection, clean shutdown, Streamlit statistics and alerts, integration tests, demonstration | Implemented; real NIC check needs Npcap |
 
 Each part has test requirements in [tests/README.md](tests/README.md).
 The initial project uses **Python + Scapy + Streamlit**, without machine learning,
@@ -36,14 +38,14 @@ The default command performs Part 1 analysis; add `--detect` for Part 2 rules an
 
 ## Setup
 
-Use **Python 3.10 or newer**. From the project folder in PowerShell:
+Use **Python 3.11 or newer** (required by the dashboard dependency). From the project folder in PowerShell:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-This installs the local package and Scapy. Streamlit will be needed in Part 3.
+This installs the local package, Scapy, and Streamlit.
 The commands use the virtual environment directly, so activation is unnecessary.
 
 Configuration is optional. To customize it, copy the example once:
@@ -91,7 +93,10 @@ available at `.\.venv\Scripts\netsentinel.exe` on Windows.
 
 | Option | Meaning |
 | --- | --- |
-| `--pcap` | Required uncompressed PCAP/PCAPNG input |
+| `--pcap` | Uncompressed PCAP/PCAPNG input; choose one source option |
+| `--interface` | Live interface name or exact interface ID |
+| `--list-interfaces` | Print interfaces and capture-provider availability |
+| `--duration` | Positive finite live-capture duration in seconds |
 | `--config` | Optional JSON configuration file |
 | `--limit` | Positive maximum raw frames to process, including skipped frames |
 | `--sample-limit` | Keep the first 0–1000 analyzed records; default 10 |
@@ -136,6 +141,89 @@ unique ID. Replaying a capture adds new alerts rather than deduplicating across 
 The summary contains the current run's counters and its latest 100 alerts. Detection
 reports use schema version 2; analysis-only reports retain schema version 1. Alert
 records have their own schema version 1.
+
+## Run the dashboard (Part 3)
+
+After generating the threat summary above, start the dashboard:
+
+```powershell
+.\.venv\Scripts\python.exe -m streamlit run src\netsentinel\dashboard\app.py
+```
+
+Open **http://127.0.0.1:8501**. The checked-in `.streamlit/config.toml` binds to
+localhost, disables usage telemetry, and sets the dark theme. Stop a foreground
+dashboard server with Ctrl+C in its launching terminal.
+
+The dashboard shows packet/analyzed/skipped/alert totals, TCP/UDP distribution,
+tracked source activity, recent alerts, scores, evidence, and packet samples.
+Filter alerts by severity or source/destination. Snapshots refresh every two
+seconds; the toggle and refresh button control that behavior. Download the loaded
+snapshot directly from the page.
+
+Select the snapshot path in the sidebar. By default the dashboard prefers
+`logs/threat_summary.json`, then `logs/summary.json`, then `logs/live_summary.json`.
+Set `NETSENTINEL_REPORT` to override this starting choice. Snapshot alerts are the
+default, so they agree with the displayed counters. An optional alert-log override
+reads the current run's latest valid records independently and can be slightly
+ahead of the last published snapshot.
+
+The dashboard **only reads files**: refreshes cannot start capture, duplicate
+pipelines, or write alerts. Missing/corrupt snapshots show a message. Invalid or
+partially appended log lines are ignored with a warning. Readers are bounded to
+8 MiB per snapshot, the final 2 MiB of logs, and 100 displayed alerts. Live errors,
+stopped status, and running snapshots older than 10 seconds are visible.
+
+## Run live monitoring (Part 3)
+
+First inspect available interfaces and provider support:
+
+```powershell
+.\.venv\Scripts\python.exe -m netsentinel --list-interfaces
+```
+
+On Windows, install Npcap locally if `provider_available` is false, then restart
+the terminal. The provider and interface must be available, with capture permissions
+granted by the operating system/provider. Other platforms need an appropriate
+Scapy capture backend and permissions. Driver installation is separate from pip.
+
+Using an authorized local interface from that list, run:
+
+```powershell
+.\.venv\Scripts\python.exe -m netsentinel --interface "Wi-Fi" --detect --duration 60 --output logs\live_summary.json --alert-log logs\live_alerts.jsonl
+```
+
+Replace `Wi-Fi` with your interface name or exact ID. Choose exactly one of
+`--pcap`, `--interface`, or `--list-interfaces`. Live capture can stop after a
+`--duration`, a raw-frame `--limit`, or Ctrl+C; omitting both bounds runs until
+interrupted. Live monitoring defaults its output to `logs/live_summary.json`.
+Select that snapshot in the dashboard to follow the run. Detection still requires
+`--detect`; without it the live session only analyzes traffic.
+
+One socket feeds the **same analysis/detection session used offline**, with no
+retained raw packet list. Polling allows idle shutdown and heartbeat publication
+about once per second, plus processing time. Callback failures cannot disappear
+inside the packet provider. The socket closes on completion, interruption, or
+failure. This educational monitor does not guarantee lossless capture at high
+rates, and no packets are transmitted by the capture code.
+
+Live snapshots are replaced atomically with `starting`, `running`, `completed`,
+`stopped`, or `failed` status. They include the last counters and visible error
+details. Ctrl+C publishes `stopped` before exit code 130. Event-time detection
+windows expire as accepted packet timestamps advance, not during idle wall-clock
+periods. Programmatic callers can supply a stop event to `monitor_live`.
+
+Exclusive `.capture.lock` sidecars protect live output and alert-log ownership.
+A second live writer is rejected. They contain the owner's PID and are removed on
+normal cleanup; abrupt process termination can leave a stale lock. Remove one
+only after verifying its recorded process is no longer running. Do not run an
+offline writer against a log that a live session is actively using.
+
+**Validation on this PC:** the dashboard health/page checks returned HTTP 200,
+and the offline threat demo rendered the expected Medium/High/Critical data.
+A real `Wi-Fi` capture attempt failed cleanly because Npcap is unavailable and
+published `logs/live_probe.json` with the failure reason. Actual NIC packet capture
+remains unverified until the provider is installed. Automated socket/provider
+tests cover lifecycle, timing, packet flow, errors, and cleanup without a driver.
 
 ## Detection and scoring procedure
 
@@ -239,7 +327,7 @@ reissuing alerts for every previously observed target when a source-wide rate ch
   JSON timestamps are floating-point seconds; nanosecond precision is not guaranteed.
 
 On Windows, Scapy may print `No libpcap provider available`. Offline reading still
-works; live capture prerequisites will be addressed in Part 3.
+works; see the live-monitoring setup above for capture prerequisites.
 
 ## Tests
 
@@ -255,10 +343,12 @@ For coverage:
 .\.venv\Scripts\python.exe -m coverage report -m
 ```
 
-Parts 1 and 2 validation: **147 tests passed, no skips; 99% combined statement/branch
-coverage** on Windows with Python 3.12.5 and Scapy 2.8.0. The detection engine,
-three rule modules, risk scoring, and alert logging each have **100% statement and
-branch coverage**. See
+Full project validation: **201 tests passed, no skips; 99% combined statement/branch
+coverage** on Windows with Python 3.12.5, Scapy 2.8.0, and Streamlit 1.66.0.
+New live capture, runtime, storage, dashboard, and data-reader modules each have
+**100% statement and branch coverage**, along with the detection/scoring/logging
+modules. Real Streamlit widget tests verify rendering, filtering, refreshes, and
+failure states; live socket tests use controlled providers. See
 [tests/README.md](tests/README.md) for the test matrix and scope. Tests use synthetic
 traffic and need no live capture privileges. The hard-link test can skip when a
 filesystem or sandbox denies link creation; it passed in the validation run.
@@ -271,11 +361,12 @@ SentiNet/
 |-- README.md
 |-- pyproject.toml               # Package, entry point, optional dependencies
 |-- requirements.txt
+|-- .streamlit/config.toml       # Localhost dashboard settings and theme
 |-- config/settings.example.json
 |-- examples/create_demo_capture.py
 |-- examples/create_detection_demo.py
 |-- data/pcaps/                  # Authorized inputs (ignored by Git)
-|-- logs/                       # Generated reports and future alerts (ignored)
+|-- logs/                       # Generated reports and alerts (ignored)
 |-- src/netsentinel/
 |   |-- __init__.py
 |   |-- __main__.py              # python -m netsentinel
@@ -284,6 +375,9 @@ SentiNet/
 |   |-- errors.py
 |   |-- models.py
 |   |-- capture.py
+|   |-- live.py                  # Interface discovery and live capture
+|   |-- runtime.py               # Live lifecycle and heartbeat snapshots
+|   |-- storage.py               # Atomic reports and live ownership locks
 |   |-- analyzer.py
 |   |-- statistics.py
 |   |-- pipeline.py
@@ -294,18 +388,19 @@ SentiNet/
 |   |   |-- port_scan.py
 |   |   |-- syn_flood.py
 |   |   `-- traffic_anomaly.py
-|   `-- dashboard/app.py         # Part 3 placeholder
+|   `-- dashboard/
+|       |-- app.py               # Streamlit dashboard
+|       `-- data.py              # Bounded validated snapshot/log readers
 `-- tests/                       # Tests and acceptance matrix
 ```
 
-## Next implementation steps
+## Project completion and remaining lab check
 
-**Parts 1 and 2 are complete.** The example configuration supplies initial lab
+**All planned code is implemented and the automated suite passes.** The example configuration supplies initial lab
 thresholds to tune, not validated production detection settings.
 
-**Part 3:** Feed live traffic through the same pipeline, publish statistics safely,
-and build Streamlit independently of capture. Test lifecycle, permissions,
-unavailable interfaces, missing/corrupt logs, refresh behavior, and the complete
-packet-to-alert-to-dashboard workflow before demonstrating it.
+The remaining environment-dependent check is an authorized real-interface run
+after installing Npcap on this machine. The successful offline demonstration and
+mocked live integration do not substitute for that NIC lab result.
 
 Use only your own/local lab traffic or saved captures you are authorized to analyze.
